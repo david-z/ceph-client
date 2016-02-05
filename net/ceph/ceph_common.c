@@ -751,6 +751,7 @@ static void __exit exit_ceph_lib(void)
 	ceph_msgr_exit();
 	ceph_crypto_shutdown();
 	ceph_debugfs_cleanup();
+	ceph_string_cleanup();
 }
 
 module_init(init_ceph_lib);
