@@ -1713,10 +1713,23 @@ static int ceph_oloc_decode(void **p, void *end,
 	}
 
 	if (struct_v >= 5) {
+		bool changed = false;
 		u32 ns_len = ceph_decode_32(p);
 		if (ns_len > 0) {
 			ceph_decode_need(p, end, ns_len, e_inval);
+			if (oloc->pool != -1 &&
+			    (!oloc->pool_ns ||
+			     ceph_compare_string(oloc->pool_ns, *p, ns_len)))
+				changed = true;
 			*p += ns_len;
+		} else {
+			if (oloc->pool != -1 && oloc->pool_ns)
+				changed = true;
+		}
+		if (changed) {
+			/* redirect changes namespace */
+			pr_warn("ceph_object_locator::nspace is changed\n");
+			goto e_inval;
 		}
 	}
 
@@ -1889,7 +1902,9 @@ static void handle_reply(struct ceph_osd_client *osdc, struct ceph_msg *msg)
 	}
 
 	if (decode_redir) {
+		redir.oloc.pool_ns = req->r_target_oloc.pool_ns;
 		err = ceph_redirect_decode(&p, end, &redir);
+		redir.oloc.pool_ns = NULL;
 		if (err)
 			goto bad_put;
 	} else {
