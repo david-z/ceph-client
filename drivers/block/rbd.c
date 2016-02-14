@@ -1952,7 +1952,7 @@ static struct ceph_osd_request *rbd_osd_req_create(
 	/* Allocate and initialize the request, for the num_ops ops */
 
 	osdc = &rbd_dev->rbd_client->client->osdc;
-	osd_req = ceph_osdc_alloc_request(osdc, snapc, num_ops, false,
+	osd_req = ceph_osdc_alloc_request(osdc, snapc, NULL, num_ops, false,
 					  GFP_NOIO);
 	if (!osd_req)
 		return NULL;	/* ENOMEM */
@@ -2001,7 +2001,7 @@ rbd_osd_req_create_copyup(struct rbd_obj_request *obj_request)
 	snapc = img_request->snapc;
 	rbd_dev = img_request->rbd_dev;
 	osdc = &rbd_dev->rbd_client->client->osdc;
-	osd_req = ceph_osdc_alloc_request(osdc, snapc, num_osd_ops,
+	osd_req = ceph_osdc_alloc_request(osdc, snapc, NULL, num_osd_ops,
 						false, GFP_NOIO);
 	if (!osd_req)
 		return NULL;	/* ENOMEM */

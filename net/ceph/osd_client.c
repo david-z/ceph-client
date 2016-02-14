@@ -364,6 +364,7 @@ EXPORT_SYMBOL(ceph_osdc_put_request);
 
 struct ceph_osd_request *ceph_osdc_alloc_request(struct ceph_osd_client *osdc,
 					       struct ceph_snap_context *snapc,
+					       struct ceph_string *pool_ns,
 					       unsigned int num_ops,
 					       bool use_mempool,
 					       gfp_t gfp_flags)
@@ -426,7 +427,8 @@ struct ceph_osd_request *ceph_osdc_alloc_request(struct ceph_osd_client *osdc,
 
 	msg_size = 4 + 4 + 4; /* client_inc, osdmap_epoch, flags */
 	msg_size += 4 + 4 + 4 + 8; /* mtime, reassert_version */
-	msg_size += 2 + 4 + 8 + 4 + 4 + 4 + CEPH_MAX_NAMESPACE_LEN; /* oloc */
+	msg_size += 2 + 4 + 8 + 4 + 4 + 4 +
+		    (pool_ns ? pool_ns->len : 0); /* oloc */
 	msg_size += 1 + 8 + 4 + 4; /* pgid */
 	msg_size += 4 + CEPH_MAX_OID_NAME_LEN; /* oid */
 	msg_size += 2 + num_ops * sizeof(struct ceph_osd_op);
@@ -815,6 +817,7 @@ struct ceph_osd_request *ceph_osdc_new_request(struct ceph_osd_client *osdc,
 					       bool use_mempool)
 {
 	struct ceph_osd_request *req;
+	struct ceph_string *pool_ns;
 	u64 objnum = 0;
 	u64 objoff = 0;
 	u64 objlen = 0;
@@ -824,12 +827,18 @@ struct ceph_osd_request *ceph_osdc_new_request(struct ceph_osd_client *osdc,
 	       opcode != CEPH_OSD_OP_ZERO && opcode != CEPH_OSD_OP_TRUNCATE &&
 	       opcode != CEPH_OSD_OP_CREATE && opcode != CEPH_OSD_OP_DELETE);
 
-	req = ceph_osdc_alloc_request(osdc, snapc, num_ops, use_mempool,
-					GFP_NOFS);
-	if (!req)
+	pool_ns = ceph_try_get_string(layout->pool_ns);
+
+	req = ceph_osdc_alloc_request(osdc, snapc, pool_ns, num_ops,
+				      use_mempool, GFP_NOFS);
+	if (!req) {
+		ceph_put_string(pool_ns);
 		return ERR_PTR(-ENOMEM);
+	}
 
 	req->r_flags = flags;
+	req->r_base_oloc.pool = layout->pool_id;
+	req->r_base_oloc.pool_ns = pool_ns;
 
 	/* calculate max write size */
 	r = calc_layout(layout, off, plen, &objnum, &objoff, &objlen);
@@ -855,9 +864,6 @@ struct ceph_osd_request *ceph_osdc_new_request(struct ceph_osd_client *osdc,
 		osd_req_op_extent_init(req, which, opcode, objoff, objlen,
 				       truncate_size, truncate_seq);
 	}
-
-	req->r_base_oloc.pool = layout->pool_id;
-	req->r_base_oloc.pool_ns = ceph_try_get_string(layout->pool_ns);
 
 	snprintf(req->r_base_oid.name, sizeof(req->r_base_oid.name),
 		 "%llx.%08llx", vino.ino, objnum);

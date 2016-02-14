@@ -1749,7 +1749,7 @@ static int __ceph_pool_perm_get(struct ceph_inode_info *ci, s64 pool)
 		goto out;
 	}
 
-	rd_req = ceph_osdc_alloc_request(&fsc->client->osdc, NULL,
+	rd_req = ceph_osdc_alloc_request(&fsc->client->osdc, NULL, NULL,
 					 1, false, GFP_NOFS);
 	if (!rd_req) {
 		err = -ENOMEM;
@@ -1763,7 +1763,7 @@ static int __ceph_pool_perm_get(struct ceph_inode_info *ci, s64 pool)
 		 "%llx.00000000", ci->i_vino.ino);
 	rd_req->r_base_oid.name_len = strlen(rd_req->r_base_oid.name);
 
-	wr_req = ceph_osdc_alloc_request(&fsc->client->osdc, NULL,
+	wr_req = ceph_osdc_alloc_request(&fsc->client->osdc, NULL, NULL,
 					 1, false, GFP_NOFS);
 	if (!wr_req) {
 		err = -ENOMEM;
