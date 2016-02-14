@@ -1470,12 +1470,33 @@ int ceph_oloc_oid_to_pg(struct ceph_osdmap *osdmap,
 	if (!pi)
 		return -EIO;
 
-	pg_out->pool = oloc->pool;
-	pg_out->seed = ceph_str_hash(pi->object_hash, oid->name,
-				     oid->name_len);
-
-	dout("%s '%.*s' pgid %llu.%x\n", __func__, oid->name_len, oid->name,
-	     pg_out->pool, pg_out->seed);
+	if (!oloc->pool_ns) {
+		pg_out->pool = oloc->pool;
+		pg_out->seed = ceph_str_hash(pi->object_hash, oid->name,
+					     oid->name_len);
+		dout("%s '%.*s' pgid %llu.%x\n", __func__,
+		     oid->name_len, oid->name, pg_out->pool, pg_out->seed);
+	} else {
+		char stack_buf[256];
+		char *buf = stack_buf;
+		int nsl = oloc->pool_ns->len;
+		size_t total = nsl + 1 + oid->name_len;
+		if (total > sizeof(stack_buf)) {
+			buf = kmalloc(total, GFP_NOFS);
+			if (!buf)
+				return -ENOMEM;
+		}
+		memcpy(buf, oloc->pool_ns->str, nsl);
+		buf[nsl] = '\037';
+		memcpy(buf + nsl + 1, oid->name, oid->name_len);
+		pg_out->pool = oloc->pool;
+		pg_out->seed = ceph_str_hash(pi->object_hash, buf, total);
+		if (buf != stack_buf)
+			kfree(buf);
+		dout("%s '%.*s' ns '%.*s' pgid %llu.%x\n", __func__,
+		     oid->name_len, oid->name, nsl, oloc->pool_ns->str,
+		     pg_out->pool, pg_out->seed);
+	}
 	return 0;
 }
 EXPORT_SYMBOL(ceph_oloc_oid_to_pg);

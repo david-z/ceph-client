@@ -336,6 +336,8 @@ static void ceph_osdc_release_request(struct kref *kref)
 		osd_req_op_data_release(req, which);
 
 	ceph_put_snap_context(req->r_snapc);
+	ceph_put_string(req->r_base_oloc.pool_ns);
+
 	if (req->r_mempool)
 		mempool_free(req, req->r_osdc->req_mempool);
 	else if (req->r_num_ops <= CEPH_OSD_SLAB_OPS)
@@ -424,7 +426,7 @@ struct ceph_osd_request *ceph_osdc_alloc_request(struct ceph_osd_client *osdc,
 
 	msg_size = 4 + 4 + 4; /* client_inc, osdmap_epoch, flags */
 	msg_size += 4 + 4 + 4 + 8; /* mtime, reassert_version */
-	msg_size += 2 + 4 + 8 + 4 + 4; /* oloc */
+	msg_size += 2 + 4 + 8 + 4 + 4 + 4 + CEPH_MAX_NAMESPACE_LEN; /* oloc */
 	msg_size += 1 + 8 + 4 + 4; /* pgid */
 	msg_size += 4 + CEPH_MAX_OID_NAME_LEN; /* oid */
 	msg_size += 2 + num_ops * sizeof(struct ceph_osd_op);
@@ -855,6 +857,7 @@ struct ceph_osd_request *ceph_osdc_new_request(struct ceph_osd_client *osdc,
 	}
 
 	req->r_base_oloc.pool = layout->pool_id;
+	req->r_base_oloc.pool_ns = ceph_try_get_string(layout->pool_ns);
 
 	snprintf(req->r_base_oid.name, sizeof(req->r_base_oid.name),
 		 "%llx.%08llx", vino.ino, objnum);
@@ -1710,10 +1713,10 @@ static int ceph_oloc_decode(void **p, void *end,
 	}
 
 	if (struct_v >= 5) {
-		len = ceph_decode_32(p);
-		if (len > 0) {
-			pr_warn("ceph_object_locator::nspace is set\n");
-			goto e_inval;
+		u32 ns_len = ceph_decode_32(p);
+		if (ns_len > 0) {
+			ceph_decode_need(p, end, ns_len, e_inval);
+			*p += ns_len;
 		}
 	}
 
@@ -1898,7 +1901,7 @@ static void handle_reply(struct ceph_osd_client *osdc, struct ceph_msg *msg)
 
 		__unregister_request(osdc, req);
 
-		req->r_target_oloc = redir.oloc; /* struct */
+		req->r_target_oloc.pool = redir.oloc.pool;
 
 		/*
 		 * Start redirect requests with nofail=true.  If
@@ -2450,6 +2453,7 @@ void ceph_osdc_build_request(struct ceph_osd_request *req, u64 off,
 				struct timespec *mtime)
 {
 	struct ceph_msg *msg = req->r_request;
+	struct ceph_string *pool_ns;
 	void *p;
 	size_t msg_size;
 	int flags = req->r_flags;
@@ -2474,14 +2478,25 @@ void ceph_osdc_build_request(struct ceph_osd_request *req, u64 off,
 	req->r_request_reassert_version = p;
 	p += sizeof(struct ceph_eversion); /* will get filled in */
 
+	if (req->r_base_oloc.pool_ns)
+		pool_ns = req->r_base_oloc.pool_ns;
+	else
+		pool_ns = NULL;
+
 	/* oloc */
+	ceph_encode_8(&p, 5);
 	ceph_encode_8(&p, 4);
-	ceph_encode_8(&p, 4);
-	ceph_encode_32(&p, 8 + 4 + 4);
+	ceph_encode_32(&p, 8 + 4 + 4 + 4 + (pool_ns ? pool_ns->len : 0));
 	req->r_request_pool = p;
 	p += 8;
 	ceph_encode_32(&p, -1);  /* preferred */
 	ceph_encode_32(&p, 0);   /* key len */
+	if (pool_ns) {
+		ceph_encode_32(&p, pool_ns->len);
+		ceph_encode_copy(&p, pool_ns->str, pool_ns->len);
+	} else {
+		ceph_encode_32(&p, 0);
+	}
 
 	ceph_encode_8(&p, 1);
 	req->r_request_pgid = p;
