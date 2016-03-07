@@ -715,8 +715,10 @@ static void ceph_aio_retry_work(struct work_struct *work)
 	req->r_flags =	CEPH_OSD_FLAG_ORDERSNAP |
 			CEPH_OSD_FLAG_ONDISK |
 			CEPH_OSD_FLAG_WRITE;
-	req->r_base_oloc = orig_req->r_base_oloc;
 	req->r_base_oid = orig_req->r_base_oid;
+	req->r_base_oloc = orig_req->r_base_oloc;
+	if (req->r_base_oloc.pool_ns)
+		ceph_get_string(req->r_base_oloc.pool_ns);
 
 	req->r_ops[0] = orig_req->r_ops[0];
 	osd_req_op_init(req, 1, CEPH_OSD_OP_STARTSYNC, 0);
