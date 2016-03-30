@@ -117,7 +117,7 @@ static int monc_show(struct seq_file *s, void *p)
 	mutex_lock(&monc->mutex);
 
 	for (i = 0; i < ARRAY_SIZE(monc->subs); i++) {
-		seq_printf(s, "have %s %u", ceph_sub_str[i],
+		seq_printf(s, "have %s %u", monc->subs[i].map,
 			   monc->subs[i].have);
 		if (monc->subs[i].want)
 			seq_printf(s, " want %llu%s",

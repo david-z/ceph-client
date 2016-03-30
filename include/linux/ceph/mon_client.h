@@ -55,6 +55,13 @@ struct ceph_mon_generic_request {
 	struct ceph_msg *reply;    /* and reply */
 };
 
+/* may subscribe to mdsmap.<int> */
+#define CEPH_SUB_MAP_MAXLEN 32
+
+#define CEPH_SUB_MONMAP "monmap"
+#define CEPH_SUB_OSDMAP "osdmap"
+#define CEPH_SUB_MDSMAP "mdsmap"
+
 struct ceph_mon_client {
 	struct ceph_client *client;
 	struct ceph_monmap *monmap;
@@ -85,6 +92,7 @@ struct ceph_mon_client {
 		struct ceph_mon_subscribe_item item;
 		bool want;
 		u32 have; /* epoch */
+		char map[CEPH_SUB_MAP_MAXLEN];
 	} subs[3];
 
 #ifdef CONFIG_DEBUG_FS
@@ -99,23 +107,16 @@ extern int ceph_monmap_contains(struct ceph_monmap *m,
 extern int ceph_monc_init(struct ceph_mon_client *monc, struct ceph_client *cl);
 extern void ceph_monc_stop(struct ceph_mon_client *monc);
 
-enum {
-	CEPH_SUB_MDSMAP = 0,
-	CEPH_SUB_MONMAP,
-	CEPH_SUB_OSDMAP,
-};
-
-extern const char *ceph_sub_str[];
-
 /*
  * The model here is to indicate that we need a new map of at least
  * epoch @epoch, and also call in when we receive a map.  We will
  * periodically rerequest the map from the monitor cluster until we
  * get what we want.
  */
-bool ceph_monc_want_map(struct ceph_mon_client *monc, int sub, u32 epoch,
-			bool continuous);
-void ceph_monc_got_map(struct ceph_mon_client *monc, int sub, u32 epoch);
+bool ceph_monc_want_map(struct ceph_mon_client *monc, const char *sub,
+			u32 epoch, bool continuous);
+void ceph_monc_got_map(struct ceph_mon_client *monc, const char *sub,
+		       u32 epoch);
 
 extern void ceph_monc_request_next_osdmap(struct ceph_mon_client *monc);
 extern int ceph_monc_wait_osdmap(struct ceph_mon_client *monc, u32 epoch,

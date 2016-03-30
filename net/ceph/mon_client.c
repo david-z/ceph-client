@@ -226,12 +226,6 @@ static void __schedule_delayed(struct ceph_mon_client *monc)
 			 round_jiffies_relative(delay));
 }
 
-const char *ceph_sub_str[] = {
-	[CEPH_SUB_MDSMAP] = "mdsmap",
-	[CEPH_SUB_MONMAP] = "monmap",
-	[CEPH_SUB_OSDMAP] = "osdmap",
-};
-
 /*
  * Send subscribe request for one or more maps, according to
  * monc->subs.
@@ -260,7 +254,7 @@ static void __send_subscribe(struct ceph_mon_client *monc)
 	BUG_ON(num < 1); /* monmap sub is always there */
 	ceph_encode_32(&p, num);
 	for (i = 0; i < ARRAY_SIZE(monc->subs); i++) {
-		const char *s = ceph_sub_str[i];
+		const char *s = monc->subs[i].map;
 
 		if (!monc->subs[i].want)
 			continue;
@@ -269,11 +263,11 @@ static void __send_subscribe(struct ceph_mon_client *monc)
 		     le64_to_cpu(monc->subs[i].item.start),
 		     monc->subs[i].item.flags);
 		ceph_encode_string(&p, end, s, strlen(s));
+		BUG_ON(p + sizeof(monc->subs[i].item) > end);
 		memcpy(p, &monc->subs[i].item, sizeof(monc->subs[i].item));
 		p += sizeof(monc->subs[i].item);
 	}
 
-	BUG_ON(p != (end - 35 - (ARRAY_SIZE(monc->subs) - num) * 19));
 	msg->front.iov_len = p - msg->front.iov_base;
 	msg->hdr.front_len = cpu_to_le32(msg->front.iov_len);
 	ceph_msg_revoke(msg);
@@ -308,35 +302,58 @@ bad:
 	ceph_msg_dump(msg);
 }
 
+enum {
+	CEPH_SUB_MONMAP_IDX = 0,
+	CEPH_SUB_OSDMAP_IDX,
+	CEPH_SUB_MDSMAP_IDX,
+};
+
+static int __ceph_monc_map_idx(const char *sub)
+{
+	if (!strcmp(sub, CEPH_SUB_MONMAP))
+		return CEPH_SUB_MONMAP_IDX;
+	if (!strcmp(sub, CEPH_SUB_OSDMAP))
+		return CEPH_SUB_OSDMAP_IDX;
+	/* may subscribe to mdsmap.<int> */
+	if (!strncmp(sub, CEPH_SUB_MDSMAP, strlen(CEPH_SUB_MDSMAP)))
+		return CEPH_SUB_MDSMAP_IDX;
+	BUG_ON(1);
+	return -1;
+}
+
 /*
  * Register interest in a map
  *
  * @sub: one of CEPH_SUB_*
  * @epoch: X for "every map since X", or 0 for "just the latest"
  */
-static bool __ceph_monc_want_map(struct ceph_mon_client *monc, int sub,
+static bool __ceph_monc_want_map(struct ceph_mon_client *monc, const char *sub,
 				 u32 epoch, bool continuous)
 {
 	__le64 start = cpu_to_le64(epoch);
 	u8 flags = !continuous ? CEPH_SUBSCRIBE_ONETIME : 0;
+	int idx = __ceph_monc_map_idx(sub);
 
-	dout("%s %s epoch %u continuous %d\n", __func__, ceph_sub_str[sub],
-	     epoch, continuous);
+	dout("%s %s epoch %u continuous %d\n", __func__,
+	     sub, epoch, continuous);
 
-	if (monc->subs[sub].want &&
-	    monc->subs[sub].item.start == start &&
-	    monc->subs[sub].item.flags == flags)
+	if (monc->subs[idx].want &&
+	    monc->subs[idx].item.start == start &&
+	    monc->subs[idx].item.flags == flags)
 		return false;
 
-	monc->subs[sub].item.start = start;
-	monc->subs[sub].item.flags = flags;
-	monc->subs[sub].want = true;
+	monc->subs[idx].item.start = start;
+	monc->subs[idx].item.flags = flags;
+	monc->subs[idx].want = true;
+
+	strncpy(monc->subs[idx].map, sub, CEPH_SUB_MAP_MAXLEN);
+	monc->subs[idx].map[CEPH_SUB_MAP_MAXLEN] = 0;
 
 	return true;
 }
 
-bool ceph_monc_want_map(struct ceph_mon_client *monc, int sub, u32 epoch,
-			bool continuous)
+bool ceph_monc_want_map(struct ceph_mon_client *monc, const char *sub,
+			u32 epoch, bool continuous)
 {
 	bool need_request;
 
@@ -353,22 +370,24 @@ EXPORT_SYMBOL(ceph_monc_want_map);
  *
  * @sub: one of CEPH_SUB_*
  */
-static void __ceph_monc_got_map(struct ceph_mon_client *monc, int sub,
-				u32 epoch)
+static void __ceph_monc_got_map(struct ceph_mon_client *monc,
+				const char *sub, u32 epoch)
 {
-	dout("%s %s epoch %u\n", __func__, ceph_sub_str[sub], epoch);
+	int idx = __ceph_monc_map_idx(sub);
+	dout("%s %s epoch %u\n", __func__, monc->subs[idx].map, epoch);
 
-	if (monc->subs[sub].want) {
-		if (monc->subs[sub].item.flags & CEPH_SUBSCRIBE_ONETIME)
-			monc->subs[sub].want = false;
+	if (monc->subs[idx].want) {
+		if (monc->subs[idx].item.flags & CEPH_SUBSCRIBE_ONETIME)
+			monc->subs[idx].want = false;
 		else
-			monc->subs[sub].item.start = cpu_to_le64(epoch + 1);
+			monc->subs[idx].item.start = cpu_to_le64(epoch + 1);
 	}
 
-	monc->subs[sub].have = epoch;
+	monc->subs[idx].have = epoch;
 }
 
-void ceph_monc_got_map(struct ceph_mon_client *monc, int sub, u32 epoch)
+void ceph_monc_got_map(struct ceph_mon_client *monc,
+		       const char *sub, u32 epoch)
 {
 	mutex_lock(&monc->mutex);
 	__ceph_monc_got_map(monc, sub, epoch);
@@ -381,10 +400,11 @@ EXPORT_SYMBOL(ceph_monc_got_map);
  */
 void ceph_monc_request_next_osdmap(struct ceph_mon_client *monc)
 {
-	dout("%s have %u\n", __func__, monc->subs[CEPH_SUB_OSDMAP].have);
+	int idx = __ceph_monc_map_idx(CEPH_SUB_OSDMAP);
+	dout("%s have %u\n", __func__, monc->subs[idx].have);
 	mutex_lock(&monc->mutex);
 	if (__ceph_monc_want_map(monc, CEPH_SUB_OSDMAP,
-				 monc->subs[CEPH_SUB_OSDMAP].have + 1, false))
+				 monc->subs[idx].have + 1, false))
 		__send_subscribe(monc);
 	mutex_unlock(&monc->mutex);
 }
@@ -399,18 +419,19 @@ EXPORT_SYMBOL(ceph_monc_request_next_osdmap);
 int ceph_monc_wait_osdmap(struct ceph_mon_client *monc, u32 epoch,
 			  unsigned long timeout)
 {
+	int idx = __ceph_monc_map_idx(CEPH_SUB_OSDMAP);
 	unsigned long started = jiffies;
 	long ret;
 
 	mutex_lock(&monc->mutex);
-	while (monc->subs[CEPH_SUB_OSDMAP].have < epoch) {
+	while (monc->subs[idx].have < epoch) {
 		mutex_unlock(&monc->mutex);
 
 		if (timeout && time_after_eq(jiffies, started + timeout))
 			return -ETIMEDOUT;
 
 		ret = wait_event_interruptible_timeout(monc->client->auth_wq,
-				     monc->subs[CEPH_SUB_OSDMAP].have >= epoch,
+				     monc->subs[idx].have >= epoch,
 				     ceph_timeout_jiffies(timeout));
 		if (ret < 0)
 			return ret;
@@ -890,7 +911,7 @@ int ceph_monc_init(struct ceph_mon_client *monc, struct ceph_client *cl)
 	if (!monc->m_subscribe_ack)
 		goto out_auth;
 
-	monc->m_subscribe = ceph_msg_new(CEPH_MSG_MON_SUBSCRIBE, 96, GFP_NOFS,
+	monc->m_subscribe = ceph_msg_new(CEPH_MSG_MON_SUBSCRIBE, 256, GFP_NOFS,
 					 true);
 	if (!monc->m_subscribe)
 		goto out_subscribe_ack;
