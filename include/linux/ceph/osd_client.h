@@ -17,7 +17,6 @@ struct ceph_snap_context;
 struct ceph_string;
 struct ceph_osd_request;
 struct ceph_osd_client;
-struct ceph_authorizer;
 
 /*
  * completion callback for async writepages
